@@ -3333,7 +3333,12 @@ end
 
 function CreateJoinLabel(player, userId)
 	if #scroll_3:GetChildren() >= 2546 then
-		scroll_3:ClearAllChildren()
+		for _, child in pairs(scroll_3:GetChildren()) do
+			if child ~= listlayout then
+				child:Destroy()
+			end
+		end
+		scroll_3.CanvasPosition = Vector2.new(0, 0)
 	end
 	local infoFrame = Instance.new("Frame")
 	local info1 = Instance.new("TextLabel")
@@ -3377,8 +3382,12 @@ function CreateJoinLabel(player, userId)
 	ImageLabel_3.BorderSizePixel = 0
 	ImageLabel_3.Size = UDim2.new(0, 45, 1, 0)
 	ImageLabel_3.Image = Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.AvatarThumbnail, Enum.ThumbnailSize.Size420x420)
-	scroll_3.CanvasSize = UDim2.new(0, 0, 0, listlayout.AbsoluteContentSize.Y)
-	scroll_3.CanvasPosition = Vector2.new(0, scroll_2.CanvasPosition.Y + infoFrame.AbsoluteSize.Y)
+	task.defer(function()
+		if infoFrame.Parent then
+			scroll_3.CanvasSize = UDim2.new(0, 0, 0, listlayout.AbsoluteContentSize.Y)
+			scroll_3.CanvasPosition = Vector2.new(0, listlayout.AbsoluteContentSize.Y)
+		end
+	end)
 	local date = os.date("!%Y-%m-%d", os.time() - (player.AccountAge * 86400))
 	local splitDates = string.split(date, "-")
 	info2.Text = string.gsub(info2.Text, "Loading...", splitDates[2] .. "/" .. splitDates[3] .. "/" .. splitDates[1])
@@ -3910,9 +3919,12 @@ end)
 
 Clear_2.MouseButton1Down:Connect(function()
 	for _, child in pairs(scroll_3:GetChildren()) do
-		child:Destroy()
+		if child ~= listlayout then
+			child:Destroy()
+		end
 	end
 	scroll_3.CanvasSize = UDim2.new(0, 0, 0, 10)
+	scroll_3.CanvasPosition = Vector2.new(0, 0)
 end)
 
 Toggle.MouseButton1Down:Connect(function()
@@ -5916,15 +5928,8 @@ function ESP(plr, logic)
 	espEntries[plr] = entry
 
 	entry.connections.characterAdded = plr.CharacterAdded:Connect(function(character)
-		if entry.connections.partAdded then
-			entry.connections.partAdded:Disconnect()
-		end
 		entry.character = nil
 		rebuildESPVisuals(entry)
-		entry.connections.partAdded = character.DescendantAdded:Connect(function(descendant)
-			addESPBox(entry, descendant)
-			refreshESPNameTag(entry, character)
-		end)
 	end)
 	entry.connections.teamChanged = plr:GetPropertyChangedSignal("TeamColor"):Connect(function()
 		local color = getESPColor(entry)
@@ -5933,13 +5938,7 @@ function ESP(plr, logic)
 		end
 	end)
 
-	local character = rebuildESPVisuals(entry)
-	if character then
-		entry.connections.partAdded = character.DescendantAdded:Connect(function(descendant)
-			addESPBox(entry, descendant)
-			refreshESPNameTag(entry, character)
-		end)
-	end
+	rebuildESPVisuals(entry)
 	ensureESPUpdater()
 end
 
