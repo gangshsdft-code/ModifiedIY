@@ -5723,185 +5723,224 @@ function round(num, numDecimalPlaces)
 	return math.floor(num * mult + 0.5) / multd
 end
 
-function ESP(plr, logic)
-	task.spawn(function()
-		local holderName = plr.Name..'_ESP'
-		local localPlayer = Players.LocalPlayer
+-- ESP uses one throttled updater for every tracked player.  The old version
+-- created one RenderStepped callback per player and rebuilt each character's
+-- boxes every frame, which scales poorly in large servers.
+local espEntries = {}
+local espUpdateConnection
+local ESP_UPDATE_INTERVAL = 0.15
 
-		for _, child in pairs(COREGUI:GetChildren()) do
-			if child.Name == holderName then
-				child:Destroy()
-			end
-		end
+local function getESPAnchor(character)
+	return character:FindFirstChild("Head")
+		or getRoot(character)
+		or character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChildWhichIsA("BasePart")
+end
 
-		if plr == localPlayer or COREGUI:FindFirstChild(holderName) then
+local function getESPColor(entry)
+	if entry.teamLogic then
+		return BrickColor.new(entry.player.TeamColor == Players.LocalPlayer.TeamColor and "Bright green" or "Bright red")
+	end
+	return entry.player.TeamColor
+end
+
+local function clearESPVisuals(entry)
+	for _, child in pairs(entry.holder:GetChildren()) do
+		child:Destroy()
+	end
+	entry.boxedParts = {}
+	entry.billboard = nil
+	entry.label = nil
+end
+
+local function addESPBox(entry, part)
+	if entry.boxedParts[part] or not part:IsA("BasePart") then
+		return
+	end
+
+	local box = Instance.new("BoxHandleAdornment")
+	box.Name = entry.player.Name
+	box.Parent = entry.holder
+	box.Adornee = part
+	box.AlwaysOnTop = true
+	box.ZIndex = 10
+	box.Size = part.Size
+	box.Transparency = espTransparency
+	box.Color = getESPColor(entry)
+	entry.boxedParts[part] = box
+end
+
+local function refreshESPNameTag(entry, character)
+	local anchor = getESPAnchor(character)
+	if not anchor then
+		return
+	end
+
+	if not entry.billboard then
+		local billboard = Instance.new("BillboardGui")
+		billboard.Adornee = anchor
+		billboard.Name = entry.player.Name
+		billboard.Parent = entry.holder
+		billboard.Size = UDim2.new(0, 100, 0, 150)
+		billboard.StudsOffset = Vector3.new(0, 1, 0)
+		billboard.AlwaysOnTop = true
+
+		local label = Instance.new("TextLabel")
+		label.Parent = billboard
+		label.BackgroundTransparency = 1
+		label.Position = UDim2.new(0, 0, 0, -50)
+		label.Size = UDim2.new(0, 100, 0, 100)
+		label.Font = Enum.Font.Code
+		label.TextSize = 14
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextStrokeTransparency = 0.5
+		label.TextYAlignment = Enum.TextYAlignment.Bottom
+		label.Text = 'Name: '..entry.player.Name
+		label.ZIndex = 10
+		entry.billboard = billboard
+		entry.label = label
+	elseif entry.billboard.Adornee ~= anchor then
+		entry.billboard.Adornee = anchor
+	end
+end
+
+local function rebuildESPVisuals(entry)
+	local character = entry.player.Character
+	if character == entry.character then
+		return character
+	end
+
+	clearESPVisuals(entry)
+	entry.character = character
+	if not character then
+		return nil
+	end
+
+	for _, child in pairs(character:GetChildren()) do
+		addESPBox(entry, child)
+	end
+	refreshESPNameTag(entry, character)
+	return character
+end
+
+local function destroyESPEntry(entry)
+	if espEntries[entry.player] ~= entry then
+		return
+	end
+	espEntries[entry.player] = nil
+	for _, connection in pairs(entry.connections) do
+		connection:Disconnect()
+	end
+end
+
+local function updateESPEntry(entry, localRoot)
+	if not ESPenabled or not entry.holder.Parent then
+		destroyESPEntry(entry)
+		return
+	end
+
+	local character = rebuildESPVisuals(entry)
+	if not character then
+		return
+	end
+	refreshESPNameTag(entry, character)
+	if not entry.label then
+		return
+	end
+
+	local text = 'Name: '..entry.player.Name
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		text = text..' | Health: '..(math.floor(humanoid.Health * 10 + 0.5) / 10)
+	else
+		text = text..' | Health: N/A'
+	end
+
+	local targetRoot = getRoot(character)
+	if localRoot and targetRoot then
+		text = text..' | Studs: '..math.floor((localRoot.Position - targetRoot.Position).Magnitude)
+	end
+	entry.label.Text = text
+end
+
+local function ensureESPUpdater()
+	if espUpdateConnection then
+		return
+	end
+
+	local elapsed = 0
+	espUpdateConnection = RunService.Heartbeat:Connect(function(deltaTime)
+		elapsed = elapsed + deltaTime
+		if elapsed < ESP_UPDATE_INTERVAL then
 			return
 		end
+		elapsed = 0
 
-		local ESPholder = Instance.new("Folder")
-		ESPholder.Name = holderName
-		ESPholder.Parent = COREGUI
-
-		local espLoopFunc
-		local teamChange
-		local addedFunc
-		local drawnCharacter
-		local BillboardGui
-		local TextLabel
-		local boxedParts = {}
-
-		local function disconnect(connection)
-			if connection then
-				connection:Disconnect()
-			end
+		local localCharacter = Players.LocalPlayer.Character
+		local localRoot = localCharacter and getRoot(localCharacter)
+		for _, entry in pairs(espEntries) do
+			updateESPEntry(entry, localRoot)
 		end
-
-		local function stop()
-			disconnect(espLoopFunc)
-			disconnect(teamChange)
-			disconnect(addedFunc)
-		end
-
-		local function getAnchor(character)
-			return character:FindFirstChild("Head")
-				or getRoot(character)
-				or character:FindFirstChild("UpperTorso")
-				or character:FindFirstChild("Torso")
-				or character:FindFirstChildWhichIsA("BasePart")
-		end
-
-		local function addBox(part)
-			if boxedParts[part] then
-				return
-			end
-
-			local box = Instance.new("BoxHandleAdornment")
-			box.Name = plr.Name
-			box.Parent = ESPholder
-			box.Adornee = part
-			box.AlwaysOnTop = true
-			box.ZIndex = 10
-			box.Size = part.Size
-			box.Transparency = espTransparency
-			if logic == true then
-				box.Color = BrickColor.new(plr.TeamColor == localPlayer.TeamColor and "Bright green" or "Bright red")
-			else
-				box.Color = plr.TeamColor
-			end
-			boxedParts[part] = box
-		end
-
-		local function makeNameTag(anchor)
-			BillboardGui = Instance.new("BillboardGui")
-			BillboardGui.Adornee = anchor
-			BillboardGui.Name = plr.Name
-			BillboardGui.Parent = ESPholder
-			BillboardGui.Size = UDim2.new(0, 100, 0, 150)
-			BillboardGui.StudsOffset = Vector3.new(0, 1, 0)
-			BillboardGui.AlwaysOnTop = true
-
-			TextLabel = Instance.new("TextLabel")
-			TextLabel.Parent = BillboardGui
-			TextLabel.BackgroundTransparency = 1
-			TextLabel.Position = UDim2.new(0, 0, 0, -50)
-			TextLabel.Size = UDim2.new(0, 100, 0, 100)
-			TextLabel.Font = Enum.Font.Code
-			TextLabel.TextSize = 14
-			TextLabel.TextColor3 = Color3.new(1, 1, 1)
-			TextLabel.TextStrokeTransparency = 0.5
-			TextLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-			TextLabel.Text = 'Name: '..plr.Name
-			TextLabel.ZIndex = 10
-		end
-
-		local function refreshVisuals()
-			local character = plr.Character
-			if character ~= drawnCharacter then
-				for _, child in pairs(ESPholder:GetChildren()) do
-					child:Destroy()
-				end
-				drawnCharacter = character
-				BillboardGui = nil
-				TextLabel = nil
-				boxedParts = {}
-			end
-
-			if not character then
-				return nil
-			end
-
-			for _, child in pairs(character:GetChildren()) do
-				if child:IsA("BasePart") then
-					addBox(child)
-				end
-			end
-
-			local anchor = getAnchor(character)
-			if anchor then
-				if not BillboardGui then
-					makeNameTag(anchor)
-				elseif BillboardGui.Adornee ~= anchor then
-					BillboardGui.Adornee = anchor
-				end
-			end
-
-			return character
-		end
-
-		addedFunc = plr.CharacterAdded:Connect(function()
-			if ESPholder.Parent and ESPenabled then
-				stop()
-				ESPholder:Destroy()
-				ESP(plr, logic)
-			else
-				stop()
-			end
-		end)
-
-		teamChange = plr:GetPropertyChangedSignal("TeamColor"):Connect(function()
-			if ESPholder.Parent and ESPenabled then
-				stop()
-				ESPholder:Destroy()
-				ESP(plr, logic)
-			else
-				stop()
-			end
-		end)
-
-		local function espLoop()
-			if not ESPholder.Parent then
-				stop()
-				return
-			end
-
-			local character = refreshVisuals()
-			if not character or not TextLabel then
-				return
-			end
-
-			local text = 'Name: '..plr.Name
-			local humanoid = character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				local health = math.floor(humanoid.Health * 10 + 0.5) / 10
-				text = text..' | Health: '..health
-			else
-				text = text..' | Health: N/A'
-			end
-
-			local localCharacter = localPlayer.Character
-			local localRoot = localCharacter and getRoot(localCharacter)
-			local targetRoot = getRoot(character)
-			if localRoot and targetRoot then
-				local distance = math.floor((localRoot.Position - targetRoot.Position).Magnitude)
-				text = text..' | Studs: '..distance
-			end
-
-			TextLabel.Text = text
-		end
-
-		refreshVisuals()
-		espLoopFunc = RunService.RenderStepped:Connect(espLoop)
 	end)
+end
+
+function ESP(plr, logic)
+	if plr == Players.LocalPlayer then
+		return
+	end
+
+	local previousEntry = espEntries[plr]
+	if previousEntry then
+		destroyESPEntry(previousEntry)
+	end
+
+	local holderName = plr.Name..'_ESP'
+	local previousHolder = COREGUI:FindFirstChild(holderName)
+	if previousHolder then
+		previousHolder:Destroy()
+	end
+
+	local holder = Instance.new("Folder")
+	holder.Name = holderName
+	holder.Parent = COREGUI
+
+	local entry = {
+		player = plr,
+		holder = holder,
+		teamLogic = logic == true,
+		character = nil,
+		boxedParts = {},
+		connections = {},
+	}
+	espEntries[plr] = entry
+
+	entry.connections.characterAdded = plr.CharacterAdded:Connect(function(character)
+		if entry.connections.partAdded then
+			entry.connections.partAdded:Disconnect()
+		end
+		entry.character = nil
+		rebuildESPVisuals(entry)
+		entry.connections.partAdded = character.DescendantAdded:Connect(function(descendant)
+			addESPBox(entry, descendant)
+			refreshESPNameTag(entry, character)
+		end)
+	end)
+	entry.connections.teamChanged = plr:GetPropertyChangedSignal("TeamColor"):Connect(function()
+		local color = getESPColor(entry)
+		for _, box in pairs(entry.boxedParts) do
+			box.Color = color
+		end
+	end)
+
+	local character = rebuildESPVisuals(entry)
+	if character then
+		entry.connections.partAdded = character.DescendantAdded:Connect(function(descendant)
+			addESPBox(entry, descendant)
+			refreshESPNameTag(entry, character)
+		end)
+	end
+	ensureESPUpdater()
 end
 
 
