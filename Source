@@ -10392,7 +10392,10 @@ addcmd('tweentpposition',{'ttppos'},function(args, speaker)
 	local tpX,tpY,tpZ = tonumber((args[1]:gsub(",", ""))),tonumber((args[2]:gsub(",", ""))),tonumber((args[3]:gsub(",", "")))
 	local char = speaker.Character
 	if char and getRoot(char) then
-		TweenService:Create(getRoot(speaker.Character), TweenInfo.new(tweenSpeed, Enum.EasingStyle.Linear), {CFrame = CFrame.new(tpX,tpY,tpZ)}):Play()
+		local root = getRoot(char)
+		local destination = Vector3.new(tpX, tpY, tpZ)
+		local duration = (root.Position - destination).Magnitude / 74
+		TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(destination)}):Play()
 	end
 end)
 
