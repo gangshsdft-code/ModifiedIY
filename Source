@@ -11,7 +11,7 @@ local Temp = WorldItems:WaitForChild("Temp")
 
 local StayInServer = false
 
-local Timer = 3
+local Timer = 5
 local CurrentTimer = Timer
 local Items = {"Pale Key",}
 
@@ -22,7 +22,8 @@ task.spawn(function()
 		if CurrentTimer <= 0 and StayInServer == false then
 			if #Players:GetChildren() <= 1 then
 				LocalPlayer:Kick("\nRejoining...")
-				TeleportService:Teleport(game.PlaceId, LocalPlayer, nil)	
+				TeleportService:Teleport(game.PlaceId, LocalPlayer, nil)
+
 			else
 				LocalPlayer:Kick("Server is not refreshable.")
 			end
@@ -47,6 +48,7 @@ local function ResetTimer()
 	if StayInServer == true then
 		return
 	end
+	print("Reset timer.")
 	FindItems()
 	CurrentTimer = Timer
 end
